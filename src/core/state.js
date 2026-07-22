@@ -59,7 +59,16 @@ function getElementByRef(ref) { return _elementRefs.find(el => el.ref === ref) |
 // popups, CAPTCHA status, and pruned AX tree. This is the "sense" in sense-think-act.
 // The AX tree provides semantic structure without screenshots — critical for token efficiency.
 async function captureState(page) {
-    const state = await page.evaluate(({ interactiveSelector, mainSelectors, captchaSelectors }) => {
+    // Get iframe offsets from the main page to calculate absolute coordinates
+    const frameOffsets = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('iframe')).map(f => {
+            const r = f.getBoundingClientRect();
+            return { name: f.name, src: f.src, x: r.x, y: r.y };
+        });
+    });
+
+    // 1. Extract structural data from main frame only (headings, text, popups)
+    const state = await page.evaluate(({ mainSelectors, captchaSelectors }) => {
         function querySelectorAllDeep(selector, rootNode = document) {
             const results = Array.from(rootNode.querySelectorAll(selector));
             const walk = (node) => {
@@ -73,81 +82,102 @@ async function captureState(page) {
             return results;
         }
 
-        // Find main content root — skip nav/header/footer for cleaner extraction
         const root = mainSelectors.reduce((found, sel) => found || document.querySelector(sel), null) || document.body;
 
-        // Headings provide page structure — limited to 15 to control token count
         const headings = querySelectorAllDeep('h1,h2,h3,h4,h5', root)
             .map(el => {
                 const r = el.getBoundingClientRect();
                 return (r.width > 0) ? { level: parseInt(el.tagName[1]), text: el.innerText.trim().substring(0, 200) } : null;
             }).filter(Boolean).slice(0, 15);
 
-        // Text blocks give context without full DOM dump
         const blocks = querySelectorAllDeep('p, li, td, blockquote, pre code', root)
             .map(el => {
                 const r = el.getBoundingClientRect();
                 const cs = window.getComputedStyle(el);
-                // Skip hidden elements — they waste tokens
                 if (r.width === 0 || cs.display === 'none' || cs.visibility === 'hidden') return null;
                 return el.innerText.trim().substring(0, 500);
             }).filter(t => t && t.length > 10).slice(0, 40);
 
-        // Interactive elements — the actionable targets for click/type/select
-        const elements = querySelectorAllDeep(interactiveSelector, document).map(el => {
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            // Only include visible elements — hidden ones cause click failures
-            const visible = rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-            if (!visible) return null;
-
-            const entry = {
-                tag: el.tagName,
-                x: Math.round(rect.left), y: Math.round(rect.top),
-                w: Math.round(rect.width), h: Math.round(rect.height),
-            };
-            if (el.id) entry.id = el.id;
-            if (el.className) entry.class = el.className.toString().trim().substring(0, 120);
-            if (el.getAttribute('role')) entry.role = el.getAttribute('role');
-            if (el.innerText) entry.text = el.innerText.trim().substring(0, 150);
-            if (el.tagName === 'A' && el.href) entry.href = el.href;
-            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') entry.value = el.value.substring(0, 100);
-
-            return entry;
-        }).filter(Boolean);
-        // Assign 1-based ref indices — used by browser_click_ref for stable targeting
-        elements.forEach((el, i) => { el.ref = i + 1; });
-
-        // Popups/modals block interaction — detect them for auto-dismissal
         const popups = querySelectorAllDeep('.modal, [role="dialog"], .swal2-popup', document)
             .map(el => {
                 const rect = el.getBoundingClientRect();
                 if (rect.width === 0) return null;
-                return {
-                    text: el.innerText.trim().substring(0, 300),
-                    visible: true
-                };
+                return { text: el.innerText.trim().substring(0, 300), visible: true };
             }).filter(Boolean);
-
-        // CAPTCHA detection — triggers auto-handling or DuckDuckGo fallback
-        const captchaDetected = !!document.querySelector(captchaSelectors);
 
         return {
             url: location.href,
             title: document.title,
             headings,
             text: blocks.join('\n').substring(0, 5000),
-            elements,
             popups: popups.length ? popups : undefined,
-            captchaDetected
+            captchaDetected: !!document.querySelector(captchaSelectors)
         };
-    }, { 
-        interactiveSelector: INTERACTIVE_SELECTOR, 
-        mainSelectors: MAIN_CONTENT_SELECTORS,
-        captchaSelectors: CAPTCHA_SELECTORS 
-    });
+    }, { mainSelectors: MAIN_CONTENT_SELECTORS, captchaSelectors: CAPTCHA_SELECTORS });
 
-    // AX tree is optional — many pages don't expose it, and it's expensive in tokens
+    // 2. Extract interactable elements from ALL frames (Cross-origin iframe piercing SOTA)
+    let allElements = [];
+    for (const frame of page.frames()) {
+        try {
+            let offsetX = 0, offsetY = 0;
+            if (frame !== page.mainFrame()) {
+                const url = frame.url();
+                const name = frame.name();
+                // Match iframe by name or partial URL to get its offset
+                const match = frameOffsets.find(f => (name && f.name === name) || (f.src && url.includes(f.src)) || (f.src && f.src.includes(url)));
+                if (match) {
+                    offsetX = match.x;
+                    offsetY = match.y;
+                }
+            }
+
+            const frameElements = await frame.evaluate(({ interactiveSelector, offsetX, offsetY }) => {
+                function querySelectorAllDeep(selector, rootNode = document) {
+                    const results = Array.from(rootNode.querySelectorAll(selector));
+                    const walk = (node) => {
+                        if (node.shadowRoot) {
+                            results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
+                            walk(node.shadowRoot);
+                        }
+                        Array.from(node.children).forEach(walk);
+                    };
+                    walk(rootNode);
+                    return results;
+                }
+
+                return querySelectorAllDeep(interactiveSelector, document).map(el => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    if (rect.width === 0 || rect.height === 0 || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return null;
+
+                    const entry = {
+                        tag: el.tagName,
+                        x: Math.round(rect.left + offsetX), 
+                        y: Math.round(rect.top + offsetY),
+                        w: Math.round(rect.width), h: Math.round(rect.height),
+                    };
+                    if (el.id) entry.id = el.id;
+                    if (el.className) entry.class = el.className.toString().trim().substring(0, 120);
+                    if (el.getAttribute('role')) entry.role = el.getAttribute('role');
+                    if (el.innerText) entry.text = el.innerText.trim().substring(0, 150);
+                    if (el.tagName === 'A' && el.href) entry.href = el.href.substring(0, 150);
+                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') entry.value = (el.value || '').substring(0, 100);
+
+                    return entry;
+                }).filter(Boolean);
+            }, { interactiveSelector: INTERACTIVE_SELECTOR, offsetX, offsetY });
+            
+            allElements.push(...frameElements);
+        } catch (e) {
+            // Ignore frames that are detached or have strict CSP blocking evaluation
+        }
+    }
+
+    // Assign sequential 1-based refs across all unified elements
+    allElements.forEach((el, i) => { el.ref = i + 1; });
+    state.elements = allElements;
+
+    // 3. Accessibility Tree (Main frame only for now)
     let axTree = null;
     try {
         const raw = await page.accessibility.snapshot({ interestingOnly: true });
@@ -163,48 +193,74 @@ async function captureState(page) {
 // No headings, no text blocks, no AX tree, no screenshots.
 // Use this when you just need to find something to click (saves ~90% tokens).
 async function observeInteractable(page) {
-    const elements = await page.evaluate(({ interactiveSelector }) => {
-        function querySelectorAllDeep(selector, rootNode = document) {
-            const results = Array.from(rootNode.querySelectorAll(selector));
-            const walk = (node) => {
-                if (node.shadowRoot) {
-                    results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
-                    walk(node.shadowRoot);
+    const frameOffsets = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('iframe')).map(f => {
+            const r = f.getBoundingClientRect();
+            return { name: f.name, src: f.src, x: r.x, y: r.y };
+        });
+    });
+
+    let allElements = [];
+    for (const frame of page.frames()) {
+        try {
+            let offsetX = 0, offsetY = 0;
+            if (frame !== page.mainFrame()) {
+                const url = frame.url();
+                const name = frame.name();
+                const match = frameOffsets.find(f => (name && f.name === name) || (f.src && url.includes(f.src)) || (f.src && f.src.includes(url)));
+                if (match) {
+                    offsetX = match.x;
+                    offsetY = match.y;
                 }
-                Array.from(node.children).forEach(walk);
-            };
-            walk(rootNode);
-            return results;
-        }
-        return querySelectorAllDeep(interactiveSelector, document).map((el, i) => {
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            const visible = rect.width > 0 && rect.height > 0
-                && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-            if (!visible) return null;
-
-            const entry = {
-                ref: i + 1,
-                tag: el.tagName,
-                x: Math.round(rect.left), y: Math.round(rect.top),
-                w: Math.round(rect.width), h: Math.round(rect.height),
-            };
-            if (el.id) entry.id = el.id;
-            if (el.getAttribute('role')) entry.role = el.getAttribute('role');
-            if (el.innerText) entry.text = el.innerText.trim().substring(0, 150);
-            if (el.tagName === 'A' && el.href) entry.href = el.href;
-            if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
-                entry.inputType = el.type || el.tagName.toLowerCase();
-                if (el.value) entry.value = el.value.substring(0, 100);
-                if (el.placeholder) entry.placeholder = el.placeholder;
-                if (el.name) entry.name = el.name;
             }
-            return entry;
-        }).filter(Boolean);
-    }, { interactiveSelector: INTERACTIVE_SELECTOR });
 
-    storeElementRefs(elements);
-    return { url: page.url(), title: await page.title(), elementCount: elements.length, elements };
+            const frameElements = await frame.evaluate(({ interactiveSelector, offsetX, offsetY }) => {
+                function querySelectorAllDeep(selector, rootNode = document) {
+                    const results = Array.from(rootNode.querySelectorAll(selector));
+                    const walk = (node) => {
+                        if (node.shadowRoot) {
+                            results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
+                            walk(node.shadowRoot);
+                        }
+                        Array.from(node.children).forEach(walk);
+                    };
+                    walk(rootNode);
+                    return results;
+                }
+                return querySelectorAllDeep(interactiveSelector, document).map(el => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    const visible = rect.width > 0 && rect.height > 0
+                        && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                    if (!visible) return null;
+
+                    const entry = {
+                        tag: el.tagName,
+                        x: Math.round(rect.left + offsetX), 
+                        y: Math.round(rect.top + offsetY),
+                        w: Math.round(rect.width), h: Math.round(rect.height),
+                    };
+                    if (el.id) entry.id = el.id;
+                    if (el.getAttribute('role')) entry.role = el.getAttribute('role');
+                    if (el.innerText) entry.text = el.innerText.trim().substring(0, 150);
+                    if (el.tagName === 'A' && el.href) entry.href = el.href.substring(0, 150);
+                    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+                        entry.inputType = el.type || el.tagName.toLowerCase();
+                        if (el.value) entry.value = el.value.substring(0, 100);
+                        if (el.placeholder) entry.placeholder = el.placeholder;
+                        if (el.name) entry.name = el.name;
+                    }
+                    return entry;
+                }).filter(Boolean);
+            }, { interactiveSelector: INTERACTIVE_SELECTOR, offsetX, offsetY });
+            
+            allElements.push(...frameElements);
+        } catch (e) {}
+    }
+
+    allElements.forEach((el, i) => { el.ref = i + 1; });
+    storeElementRefs(allElements);
+    return { url: page.url(), title: await page.title(), elementCount: allElements.length, elements: allElements };
 }
 
 module.exports = {

@@ -1045,6 +1045,18 @@ const TOOLS = [
         },
     },
 
+    {
+        name: 'browser_download_click',
+        description: 'Click an element (by ref) that triggers a file download, intercepts the OS file dialog, and saves the file to the local workspace.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                ref: { type: 'number', description: 'The ref ID of the element that triggers the download.' },
+                savePath: { type: 'string', description: 'Absolute path to save the downloaded file. If omitted, saves to the current working directory with the suggested filename.' }
+            },
+            required: ['ref'],
+        }
+    },
     // ── Click Nth ────────────────────────────────────────────────────────────
     {
         name: 'browser_click_nth',
@@ -2789,7 +2801,46 @@ async function handleToolCall(name, args) {
             }
             await page.mouse.click(cx, cy);
             recorder.record('click_ref', { ref: args.ref, label: el.text, x: cx, y: cy, selector: el.id ? `#${el.id}` : null });
-            return { content: [{ type: 'text', text: `Clicked ref ${args.ref} (${el.tag}${label}) at (${cx}, ${cy}).` }] };
+            
+            // SOTA Action Verification: Wait for DOM/Network to settle
+            const urlBefore = page.url();
+            await page.waitForLoadState('networkidle', { timeout: 1500 }).catch(() => {});
+            const urlAfter = page.url();
+            
+            let resultText = `Clicked ref ${args.ref} (${el.tag}${label}) at (${cx}, ${cy}).`;
+            if (urlBefore !== urlAfter) {
+                resultText += ` Action resulted in navigation to: ${urlAfter}`;
+            } else {
+                resultText += ` Action completed on current page.`;
+            }
+            
+            return { content: [{ type: 'text', text: resultText }] };
+        }
+        
+        case 'browser_download_click': {
+            const el = getElementByRef(args.ref);
+            if (!el) {
+                return { content: [{ type: 'text', text: `Ref ${args.ref} not found.` }], isError: true };
+            }
+            
+            const cx = el.x + Math.floor(el.w / 2);
+            const cy = el.y + Math.floor(el.h / 2);
+            
+            const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
+            await page.mouse.click(cx, cy);
+            
+            try {
+                const download = await downloadPromise;
+                const path = require('path');
+                const defaultPath = path.join(process.cwd(), download.suggestedFilename());
+                const savePath = args.savePath || defaultPath;
+                
+                await download.saveAs(savePath);
+                
+                return { content: [{ type: 'text', text: `Successfully downloaded file to: ${savePath}` }] };
+            } catch (e) {
+                return { content: [{ type: 'text', text: `Failed to capture download: ${e.message}` }], isError: true };
+            }
         }
 
         // CDP Diagnostics
