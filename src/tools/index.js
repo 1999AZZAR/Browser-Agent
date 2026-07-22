@@ -1294,7 +1294,11 @@ async function handleToolCall(name, args) {
             let lastError;
             for (const fb of fallbacks) {
                 try {
-                    const box = await page.locator(fb).first().boundingBox({ timeout: 2000 });
+                    const loc = page.locator(fb).first();
+                    // Trial click ensures the element is visible, enabled, and NOT occluded by a modal.
+                    await loc.click({ trial: true, timeout: 2000 });
+                    
+                    const box = await loc.boundingBox({ timeout: 2000 });
                     if (!box) continue;
 
                     // Stealth mode: move mouse to center with jitter, then click
@@ -1340,7 +1344,7 @@ async function handleToolCall(name, args) {
             const cached = cache.get(hostname, cacheKey);
 
             if (cached) {
-                const ok = await page.click(cached, { force: true }).then(() => true).catch(() => false);
+                const ok = await page.click(cached).then(() => true).catch(() => false);
                 if (ok) {
                     recorder.record('click_text', { text: args.text, elType: args.type, selector: cached });
                     return { content: [{ type: 'text', text: `Clicked "${args.text}" (cache hit: ${cached}).` }] };
@@ -1351,7 +1355,7 @@ async function handleToolCall(name, args) {
             // Cache miss or stale: discover selector
             const baseSelector = args.type === 'button' ? 'button, [role="button"]' : args.type === 'link' ? 'a, [role="link"]' : '*';
             const selector = `${baseSelector}:has-text("${args.text}")`;
-            await page.click(selector, { force: true });
+            await page.click(selector);
             cache.set(hostname, cacheKey, selector);
             recorder.record('click_text', { text: args.text, elType: args.type, selector });
             return { content: [{ type: 'text', text: `Clicked element with text "${args.text}".` }] };
@@ -2389,17 +2393,25 @@ async function handleToolCall(name, args) {
                 return { content: [{ type: 'text', text: `CAPTCHA solved via ${result.method}.` }] };
             }
 
-            // Image challenge — return screenshot for agent to solve visually
+            // Image challenge — use challenge screenshot if available, else full page
             if (result.challenge?.type === 'image') {
-                const ss = await page.screenshot({ type: 'png' });
                 const content = [
                     { type: 'text', text: `Image challenge: "${result.challenge.prompt}"\nGrid: ${result.challenge.gridSize}x${result.challenge.gridSize} (${result.challenge.tileCount} tiles)\nDetermine which tiles contain the target object, then call browser_solve_captcha_grid(indices=[1-based tile numbers]) to click them. After clicking verify, call browser_handle_captcha(verify=true) to check result.` },
-                    { type: 'image', data: ss.toString('base64'), mimeType: 'image/png' }
                 ];
+                // Prefer the challenge-only screenshot (smaller, more precise)
+                const imgData = result.challenge.imageBase64
+                    ? result.challenge.imageBase64
+                    : (await page.screenshot({ type: 'png' })).toString('base64');
+                content.push({ type: 'image', data: imgData, mimeType: 'image/png' });
                 return { content };
             }
 
-            return { content: [{ type: 'text', text: `Challenge detected but not solvable. Try browser_screenshot to inspect.` }], isError: true };
+            // Token injection worked silently (invisible reCAPTCHA)
+            if (result.method === 'token') {
+                return { content: [{ type: 'text', text: 'reCAPTCHA solved via token injection (invisible mode).' }] };
+            }
+
+            return { content: [{ type: 'text', text: `Challenge detected but not solvable automatically. Try browser_screenshot to inspect, then browser_handle_captcha(audio=true) to attempt audio solve.` }], isError: true };
         }
 
         // ── Phase 1 Enhancements ─────────────────────────────────────────────
@@ -2578,15 +2590,37 @@ async function handleToolCall(name, args) {
         // Helpers
         case 'browser_dismiss_popups': {
             const dismissed = await page.evaluate(() => {
+                function querySelectorAllDeep(selector, rootNode = document) {
+                    const results = Array.from(rootNode.querySelectorAll(selector));
+                    const walk = (node) => {
+                        if (node.shadowRoot) {
+                            results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
+                            walk(node.shadowRoot);
+                        }
+                        Array.from(node.children).forEach(walk);
+                    };
+                    walk(rootNode);
+                    return results;
+                }
+
                 const actions = [];
                 const swal = document.querySelector('.swal2-popup');
                 if (swal && swal.getBoundingClientRect().width > 0) {
                     const btn = swal.querySelector('.swal2-confirm, .swal2-close, .swal2-cancel');
                     if (btn) { btn.click(); actions.push('swal2'); }
                 }
-                document.querySelectorAll('.modal.show, [role="dialog"], [aria-modal="true"]').forEach(m => {
+                querySelectorAllDeep('.modal.show, [role="dialog"], [aria-modal="true"]').forEach(m => {
                     if (m.getBoundingClientRect().width === 0) return;
-                    const close = m.querySelector('[data-dismiss="modal"], [data-bs-dismiss="modal"], button.close, .btn-close, [aria-label="Close"]');
+                    // standard close buttons
+                    let close = m.querySelector('[data-dismiss="modal"], [data-bs-dismiss="modal"], button.close, .btn-close, [aria-label="Close"]');
+                    // generic agree/accept/close buttons
+                    if (!close) {
+                        const btns = Array.from(m.querySelectorAll('button, a'));
+                        close = btns.find(b => {
+                            const t = b.textContent.toLowerCase();
+                            return t.includes('setuju') || t.includes('agree') || t.includes('accept') || t.includes('got it') || t.includes('close');
+                        });
+                    }
                     if (close) { close.click(); actions.push('modal'); }
                 });
                 return actions;

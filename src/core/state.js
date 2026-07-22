@@ -60,18 +60,31 @@ function getElementByRef(ref) { return _elementRefs.find(el => el.ref === ref) |
 // The AX tree provides semantic structure without screenshots — critical for token efficiency.
 async function captureState(page) {
     const state = await page.evaluate(({ interactiveSelector, mainSelectors, captchaSelectors }) => {
+        function querySelectorAllDeep(selector, rootNode = document) {
+            const results = Array.from(rootNode.querySelectorAll(selector));
+            const walk = (node) => {
+                if (node.shadowRoot) {
+                    results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
+                    walk(node.shadowRoot);
+                }
+                Array.from(node.children).forEach(walk);
+            };
+            walk(rootNode);
+            return results;
+        }
+
         // Find main content root — skip nav/header/footer for cleaner extraction
         const root = mainSelectors.reduce((found, sel) => found || document.querySelector(sel), null) || document.body;
 
         // Headings provide page structure — limited to 15 to control token count
-        const headings = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5'))
+        const headings = querySelectorAllDeep('h1,h2,h3,h4,h5', root)
             .map(el => {
                 const r = el.getBoundingClientRect();
                 return (r.width > 0) ? { level: parseInt(el.tagName[1]), text: el.innerText.trim().substring(0, 200) } : null;
             }).filter(Boolean).slice(0, 15);
 
         // Text blocks give context without full DOM dump
-        const blocks = Array.from(root.querySelectorAll('p, li, td, blockquote, pre code'))
+        const blocks = querySelectorAllDeep('p, li, td, blockquote, pre code', root)
             .map(el => {
                 const r = el.getBoundingClientRect();
                 const cs = window.getComputedStyle(el);
@@ -81,7 +94,7 @@ async function captureState(page) {
             }).filter(t => t && t.length > 10).slice(0, 40);
 
         // Interactive elements — the actionable targets for click/type/select
-        const elements = Array.from(document.querySelectorAll(interactiveSelector)).map(el => {
+        const elements = querySelectorAllDeep(interactiveSelector, document).map(el => {
             const rect = el.getBoundingClientRect();
             const style = window.getComputedStyle(el);
             // Only include visible elements — hidden ones cause click failures
@@ -106,7 +119,7 @@ async function captureState(page) {
         elements.forEach((el, i) => { el.ref = i + 1; });
 
         // Popups/modals block interaction — detect them for auto-dismissal
-        const popups = Array.from(document.querySelectorAll('.modal, [role="dialog"], .swal2-popup'))
+        const popups = querySelectorAllDeep('.modal, [role="dialog"], .swal2-popup', document)
             .map(el => {
                 const rect = el.getBoundingClientRect();
                 if (rect.width === 0) return null;
@@ -151,7 +164,19 @@ async function captureState(page) {
 // Use this when you just need to find something to click (saves ~90% tokens).
 async function observeInteractable(page) {
     const elements = await page.evaluate(({ interactiveSelector }) => {
-        return Array.from(document.querySelectorAll(interactiveSelector)).map((el, i) => {
+        function querySelectorAllDeep(selector, rootNode = document) {
+            const results = Array.from(rootNode.querySelectorAll(selector));
+            const walk = (node) => {
+                if (node.shadowRoot) {
+                    results.push(...Array.from(node.shadowRoot.querySelectorAll(selector)));
+                    walk(node.shadowRoot);
+                }
+                Array.from(node.children).forEach(walk);
+            };
+            walk(rootNode);
+            return results;
+        }
+        return querySelectorAllDeep(interactiveSelector, document).map((el, i) => {
             const rect = el.getBoundingClientRect();
             const style = window.getComputedStyle(el);
             const visible = rect.width > 0 && rect.height > 0

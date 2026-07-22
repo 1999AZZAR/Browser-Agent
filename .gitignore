@@ -39,3 +39,7 @@
 **/*.swp
 **/*.swo
 **/~
+
+# Project Guardian
+memory.db
+memory.db-journal
