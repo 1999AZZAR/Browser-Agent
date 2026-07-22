@@ -41,11 +41,6 @@ async function run() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     console.error('[MCP] General Browser Agent running on stdio');
-    
-    // Eagerly launch browser in the background to make the first tool call instantaneous
-    browser.getBrowserContext().catch(e => {
-        console.error('[MCP] Background browser pre-warm failed:', e.message);
-    });
 }
 
 // Graceful Shutdown Sequence

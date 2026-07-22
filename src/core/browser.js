@@ -148,8 +148,15 @@ async function getBrowserContext() {
             namedPages.clear();
         });
 
-        // Attempt to restore previous session state (tabs + routes)
-        await restoreState().catch(e => console.error('[Browser] State restore failed:', e.message));
+        // Start clean: close any tabs restored by Chrome's crash recovery
+        const pages = browserContext.pages();
+        for (let i = 1; i < pages.length; i++) {
+            pages[i].close().catch(() => {});
+        }
+        if (pages[0] && pages[0].url() !== 'about:blank') {
+            pages[0].goto('about:blank').catch(() => {});
+        }
+        activePage = pages[0];
     }
     return browserContext;
 }
