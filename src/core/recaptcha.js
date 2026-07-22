@@ -65,14 +65,14 @@ class RecaptchaSolver {
             throw new Error('No reCAPTCHA instance found on this page');
         }
 
-        console.log(`[CAPTCHA] Detected: type=${info.type}, domain=${info.domain}, sitekey=${info.sitekey?.substring(0, 12)}...`);
+        console.error(`[CAPTCHA] Detected: type=${info.type}, domain=${info.domain}, sitekey=${info.sitekey?.substring(0, 12)}...`);
 
         // ── 2. Invisible reCAPTCHA → token injection ──────────────────────
         // Invisible CAPTCHAs never show a checkbox; they fire a callback when
         // grecaptcha.execute() resolves. We simulate this by injecting a
         // solved token via the ___grecaptcha_cfg client callback.
         if (info.type === 'invisible') {
-            console.log('[CAPTCHA] Strategy: token injection (invisible reCAPTCHA)');
+            console.error('[CAPTCHA] Strategy: token injection (invisible reCAPTCHA)');
             const injected = await this._tryTokenInjection(info.sitekey);
             if (injected) return { method: 'token', solved: true };
             // Fall through to checkbox attempt if injection fails
@@ -82,13 +82,13 @@ class RecaptchaSolver {
         const anchorFrame = await this._getVisibleFrame(ANCHOR_SEL, TITLE_SEL);
         if (!anchorFrame) throw new Error('reCAPTCHA anchor iframe not found or not visible');
 
-        console.log('[CAPTCHA] Strategy: checkbox click');
+        console.error('[CAPTCHA] Strategy: checkbox click');
         await anchorFrame.waitForSelector('.recaptcha-checkbox, .rc-anchor-content', { timeout: 8000 });
         await this._humanClick(anchorFrame, '.recaptcha-checkbox, .rc-anchor-content');
         await this.page.waitForTimeout(1800 + Math.random() * 1200);
 
         if (await this._isSolved()) {
-            console.log('[CAPTCHA] Solved by checkbox click alone');
+            console.error('[CAPTCHA] Solved by checkbox click alone');
             return { method: 'click', solved: true };
         }
 
@@ -97,7 +97,7 @@ class RecaptchaSolver {
         if (!bframe) throw new Error('Challenge iframe not found after checkbox click');
 
         const challengeType = await this._detectChallengeType(bframe);
-        console.log(`[CAPTCHA] Challenge type: ${challengeType}`);
+        console.error(`[CAPTCHA] Challenge type: ${challengeType}`);
 
         if (challengeType === 'doscaptcha') {
             throw new Error('Bot detected by reCAPTCHA (rate-limited). Try again later.');
@@ -129,7 +129,7 @@ class RecaptchaSolver {
 
         // Switch from image to audio if needed
         if (challengeType === 'image') {
-            console.log('[CAPTCHA] Switching to audio challenge...');
+            console.error('[CAPTCHA] Switching to audio challenge...');
             await this._switchToAudio(bframe);
             await this.page.waitForTimeout(2000);
             if (await this._isDetected()) throw new Error('Bot detected after audio switch');
@@ -145,9 +145,9 @@ class RecaptchaSolver {
         const audioUrl = await this._getAudioUrl(bframe);
         if (!audioUrl) throw new Error('Could not find reCAPTCHA audio source URL');
 
-        console.log(`[CAPTCHA] Audio URL found, transcribing...`);
+        console.error(`[CAPTCHA] Audio URL found, transcribing...`);
         const text = await this._transcribeAudio(audioUrl);
-        console.log(`[CAPTCHA] Transcription: "${text}"`);
+        console.error(`[CAPTCHA] Transcription: "${text}"`);
 
         await this._submitAnswer(text);
         await this.page.waitForTimeout(1500);
@@ -463,7 +463,7 @@ class RecaptchaSolver {
                 const text = await this._transcribeWithXenova(wav);
                 if (text) return text;
             } catch (e) {
-                console.warn('[CAPTCHA] Xenova Whisper failed:', e.message, '— trying Python fallback');
+                console.error('[CAPTCHA] Xenova Whisper failed:', e.message, '— trying Python fallback');
             }
 
             // Strategy B: Python openai-whisper CLI
@@ -471,7 +471,7 @@ class RecaptchaSolver {
                 const text = this._transcribeWithPythonWhisper(wav);
                 if (text) return text;
             } catch (e) {
-                console.warn('[CAPTCHA] Python Whisper failed:', e.message);
+                console.error('[CAPTCHA] Python Whisper failed:', e.message);
             }
 
             throw new Error('All transcription methods failed. Install @xenova/transformers or openai-whisper.');
