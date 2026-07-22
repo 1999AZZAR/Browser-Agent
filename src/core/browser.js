@@ -136,22 +136,7 @@ async function newPageWithRetry() {
 }
 
 async function getBrowserContext() {
-    if (browserContext) {
-        try {
-            const pages = await Promise.race([
-                browserContext.pages(),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('context probe timeout')), CONFIG.healthCheckTimeoutMs)),
-            ]);
-            if (!Array.isArray(pages)) throw new Error('Invalid context response');
-        } catch (e) {
-            console.error(`[Browser] Existing context is unhealthy (${e.message}). Relaunching...`);
-            try { await browserContext.close(); } catch (_) {}
-            browserContext = null;
-            activePage = null;
-            namedPages.clear();
-        }
-    }
-
+    // If the browser was closed (e.g. crashed), the 'close' event handler sets browserContext to null.
     if (!browserContext) {
         browserContext = await launchWithRetry();
 
