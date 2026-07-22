@@ -14,7 +14,8 @@ A modular, production-ready browser automation agent implemented as a Model Cont
 - **PDF Export**: Save pages to disk as PDF with a custom output path and accurate file size reporting.
 - **Smart Wait Strategy**: `browser_wait_for_load` for sites with WebSocket/SSE connections; `browser_wait_until_stable` for AJAX-heavy SPAs; `browser_wait_for_navigation` for post-action URL/selector waits.
 - **Stealth and Evasion**: Anti-detection behavioral profiles (`stealth` vs `speed`), realistic user-agent spoofing, human-like mouse jitter and typing delay.
-- **Robust State Capture**: Extracts semantic page data including Accessibility Trees (AX Tree), interactive elements, and structural headings.
+- **Robust State Capture**: Extracts semantic page data including Accessibility Trees (AX Tree), interactive elements, and structural headings. **Natively pierces cross-origin iframes (like Stripe/CAPTCHA)** to provide unified DOM extraction.
+- **Vision & Set-of-Mark (SoM)**: Supports `mark_elements=true` to draw numbered bounding boxes over interactable elements in screenshots, bypassing semantic limitations of Canvas/ShadowDOM.
 - **Data Extraction**: Table-to-JSON extraction, high-fidelity PDF/HTML capture, and visible-only text extraction.
 - **CAPTCHA Management**: Automated detection and assisted resolution for reCAPTCHA, hCaptcha, and common challenge pages.
 - **API Interception & Capture**: Capture XHR/fetch responses as structured JSON — extract quiz data without DOM scraping.
@@ -82,6 +83,7 @@ Named agents are independent pages within the same browser. Use them to parallel
 | `browser_hover` | Hover over an element or coordinates |
 | `browser_drag` | Drag source element to target |
 | `browser_upload` | Upload a file to an `<input type="file">` element |
+| `browser_download_click` | Click an element (by ref) that triggers an OS file download, bypass the dialog, and save locally |
 | `browser_scroll` / `browser_scroll_to` | Scroll by direction or to a target |
 | `browser_smart_scroll` | Incremental scroll to trigger lazy-loaded content |
 
@@ -119,11 +121,11 @@ browser_assert_url("pattern=/dashboard")
 
 | Tool | Description |
 |------|-------------|
-| `browser_get_state` | Unified page snapshot: URL, title, AX tree, interactive elements, screenshot — auto-saves AX tree for later diffing |
+| `browser_get_state` | Unified page snapshot: URL, title, AX tree, interactive elements, screenshot. Use `mark_elements=true` for Set-of-Mark visual bounding boxes. |
 | `browser_observe` | **Low-token alternative to `browser_get_state`** — returns only interactable elements with `ref` numbers, no screenshot. Use for pre-action planning. |
-| `browser_click_ref` | Click an element by its `ref` number from the last `browser_observe` or `browser_get_state` call |
+| `browser_click_ref` | Click an element by its `ref` number. Includes closed-loop Action Verification (auto-awaits `networkidle` and reports navigation status). |
 | `browser_state_diff` | Compare last two AX snapshots: URL/title changes, new/removed headings, element shifts, popups, captcha |
-| `browser_screenshot` | Take a screenshot |
+| `browser_screenshot` | Take a screenshot (supports `mark_elements=true`) |
 | `browser_get_text` | Read text from one or all matching elements |
 | `browser_get_visible_text` | Extract only visible text (skips hidden, display:none, zero-size elements) |
 | `browser_get_html` | Get full page or element HTML |

@@ -4,8 +4,8 @@
 1. `#id` — fastest, most stable
 2. `[data-testid="..."]` — standard in React/Vue apps
 3. `[role="button"]`, `button:has-text("Login")` — semantic, survives refactors
-4. `.class-name` — last resort; styling-coupled, fragile
-5. `x, y` coordinates — fallback only, from `browser_get_state()` elements array
+4. `ref` (via `browser_click_ref`) — highly reliable coordinate click, natively pierces cross-origin iframes
+5. `.class-name` — last resort; styling-coupled, fragile
 
 ## AX Tree Usage
 `browser_get_state()` returns `axTree`. Use it to:
@@ -29,12 +29,12 @@ browser_wait_for_selector(new_content_selector)
 browser_get_state()   // re-sense after DOM change
 ```
 
-**Coordinates from state:**
+**Cross-Origin Iframes (CAPTCHA, Stripe):**
 ```
-// From elements array: { x, y, w, h }
-target_x = x + w/2
-target_y = y + h/2
-browser_click(x=target_x, y=target_y)
+// Do NOT try to use standard selectors on cross-origin iframes!
+// browser_observe / browser_get_state automatically extract elements inside iframes
+// and map their absolute screen coordinates. Just use click_ref:
+browser_click_ref(ref=42)
 ```
 
 ## Pre-Interaction Checklist

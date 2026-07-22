@@ -59,12 +59,20 @@ browser_get_html(selector)                  // preserve tables/lists structure
 browser_print_to_pdf()                      // permanent high-fidelity record
 ```
 
+## File Download Flow
+```
+// Headless browsers block OS save dialogs, so use browser_download_click
+browser_observe()                            // Get the ref of the download/export button
+browser_download_click(ref=42)               // Intercepts the download and saves locally
+// The tool returns the absolute path to the saved file
+```
+
 ## Blocked Element Recovery
 ```
 // Step 1: dismiss any overlay
 browser_dismiss_popups()
-// Step 2: coordinate fallback — get x,y from browser_get_state() elements array
-browser_click(x=target_x, y=target_y)
+// Step 2: use coordinate-based ref click — pierces iframes and ignores CSS pointer-events blocks
+browser_click_ref(ref=42)
 // Step 3: JS override — when pointer events are suppressed
 browser_evaluate("document.querySelector(selector).click()")
 ```
