@@ -187,22 +187,30 @@ class RecaptchaSolver {
                 '[data-sitekey], .g-recaptcha, [class*="recaptcha"]'
             ));
 
-            // Try to extract sitekey from iframes first
-            for (const iframe of candidates) {
-                const src = iframe.src || '';
-                if (!src.includes('recaptcha')) continue;
+            // Collect ALL recaptcha iframes — prefer invisible over normal.
+            // Qwiklabs injects two: a hidden size=normal tracking badge (0×0)
+            // and the actual size=invisible trigger (256×60). We must check all.
+            const rcFrames = candidates
+                .filter(f => (f.src || '').includes('recaptcha'))
+                .map(f => {
+                    const url    = new URL(f.src);
+                    const sitekey = url.searchParams.get('k') || '';
+                    const size   = url.searchParams.get('size') || 'normal';
+                    const domain = url.hostname;
+                    const rect   = f.getBoundingClientRect();
+                    return { sitekey, size, domain, w: rect.width, h: rect.height };
+                })
+                .filter(f => f.sitekey);
 
-                const url = new URL(src);
-                const sitekey = url.searchParams.get('k') || '';
-                const size    = url.searchParams.get('size') || 'normal';
-                const domain  = url.hostname; // google.com or recaptcha.net
-
+            if (rcFrames.length > 0) {
+                // Prefer invisible; if none, take any
+                const best = rcFrames.find(f => f.size === 'invisible') || rcFrames[0];
                 return {
-                    found:   true,
-                    type:    size === 'invisible' ? 'invisible' : 'visible',
-                    sitekey,
-                    domain,
-                    widget:  null,
+                    found:  true,
+                    type:   best.size === 'invisible' ? 'invisible' : 'visible',
+                    sitekey: best.sitekey,
+                    domain: best.domain,
+                    widget: null,
                 };
             }
 
