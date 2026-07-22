@@ -367,6 +367,11 @@ const TOOLS = [
                     default: false,
                     description: 'Include a screenshot. Default false — only pass true when visual context is needed (canvas, iframes, hidden-from-AX elements).',
                 },
+                mark_elements: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Set-of-Mark (SoM): If true, draws numeric badges over all interactable elements on the screenshot. The numbers match the `ref` IDs in the returned state, allowing LLMs to visually locate elements for clicking.',
+                }
             },
         },
     },
@@ -397,9 +402,18 @@ const TOOLS = [
     },
     {
         name: 'browser_screenshot',
-        description: 'Take a screenshot.',
+        description: 'Take a screenshot. Pass mark_elements=true to draw numeric badges over all interactable elements on the screenshot (Set-of-Mark).',
         annotations: { readOnlyHint: true },
-        inputSchema: { type: 'object', properties: {} },
+        inputSchema: { 
+            type: 'object', 
+            properties: {
+                mark_elements: {
+                    type: 'boolean',
+                    default: false,
+                    description: 'Set-of-Mark (SoM): Draws numeric badges over interactable elements. The numbers will correspond to refs from observeInteractable.',
+                }
+            } 
+        },
     },
     {
         name: 'browser_print_to_pdf',
@@ -1520,7 +1534,70 @@ async function handleToolCall(name, args) {
             await saveSnapshot(state);
             const content = [{ type: 'text', text: JSON.stringify(state, null, 2) }];
             if (args.screenshot) {
+                if (args.mark_elements && state.elements) {
+                    await page.evaluate((elements) => {
+                        const style = document.createElement('style');
+                        style.id = 'browser-agent-som-style';
+                        style.textContent = `
+                            .browser-agent-som-mark {
+                                position: fixed;
+                                background: #eb3449;
+                                color: white;
+                                font-size: 12px;
+                                font-weight: bold;
+                                font-family: monospace;
+                                padding: 2px 4px;
+                                border-radius: 3px;
+                                z-index: 2147483647;
+                                pointer-events: none;
+                                text-shadow: 1px 1px 0 #000;
+                                box-shadow: 0 0 0 1px #000, 0 2px 4px rgba(0,0,0,0.5);
+                                transform: translate(-50%, -50%);
+                            }
+                            .browser-agent-som-box {
+                                position: fixed;
+                                border: 2px solid #eb3449;
+                                z-index: 2147483646;
+                                pointer-events: none;
+                                background: rgba(235, 52, 73, 0.1);
+                            }
+                        `;
+                        document.head.appendChild(style);
+                        
+                        const container = document.createElement('div');
+                        container.id = 'browser-agent-som-container';
+                        document.body.appendChild(container);
+                        
+                        elements.forEach(el => {
+                            if (!el || !el.w || !el.h) return;
+                            
+                            const box = document.createElement('div');
+                            box.className = 'browser-agent-som-box';
+                            box.style.left = el.x + 'px';
+                            box.style.top = el.y + 'px';
+                            box.style.width = el.w + 'px';
+                            box.style.height = el.h + 'px';
+                            container.appendChild(box);
+                            
+                            const mark = document.createElement('div');
+                            mark.className = 'browser-agent-som-mark';
+                            mark.style.left = (el.x + el.w / 2) + 'px';
+                            mark.style.top = (el.y + el.h / 2) + 'px';
+                            mark.textContent = el.ref;
+                            container.appendChild(mark);
+                        });
+                    }, state.elements);
+                }
+                
                 const ss = await page.screenshot({ type: 'png' });
+                
+                if (args.mark_elements) {
+                    await page.evaluate(() => {
+                        document.getElementById('browser-agent-som-style')?.remove();
+                        document.getElementById('browser-agent-som-container')?.remove();
+                    });
+                }
+                
                 content.push({ type: 'image', data: ss.toString('base64'), mimeType: 'image/png' });
             }
             return { content };
@@ -1544,7 +1621,72 @@ async function handleToolCall(name, args) {
             return { content: [{ type: 'text', text: html || '(not found)' }] };
         }
         case 'browser_screenshot': {
+            if (args.mark_elements) {
+                // Quickly grab elements without full state capture to get ref positions
+                const { elements } = await observeInteractable(page);
+                await page.evaluate((elements) => {
+                    const style = document.createElement('style');
+                    style.id = 'browser-agent-som-style';
+                    style.textContent = `
+                        .browser-agent-som-mark {
+                            position: fixed;
+                            background: #eb3449;
+                            color: white;
+                            font-size: 12px;
+                            font-weight: bold;
+                            font-family: monospace;
+                            padding: 2px 4px;
+                            border-radius: 3px;
+                            z-index: 2147483647;
+                            pointer-events: none;
+                            text-shadow: 1px 1px 0 #000;
+                            box-shadow: 0 0 0 1px #000, 0 2px 4px rgba(0,0,0,0.5);
+                            transform: translate(-50%, -50%);
+                        }
+                        .browser-agent-som-box {
+                            position: fixed;
+                            border: 2px solid #eb3449;
+                            z-index: 2147483646;
+                            pointer-events: none;
+                            background: rgba(235, 52, 73, 0.1);
+                        }
+                    `;
+                    document.head.appendChild(style);
+                    
+                    const container = document.createElement('div');
+                    container.id = 'browser-agent-som-container';
+                    document.body.appendChild(container);
+                    
+                    elements.forEach(el => {
+                        if (!el || !el.w || !el.h) return;
+                        
+                        const box = document.createElement('div');
+                        box.className = 'browser-agent-som-box';
+                        box.style.left = el.x + 'px';
+                        box.style.top = el.y + 'px';
+                        box.style.width = el.w + 'px';
+                        box.style.height = el.h + 'px';
+                        container.appendChild(box);
+                        
+                        const mark = document.createElement('div');
+                        mark.className = 'browser-agent-som-mark';
+                        mark.style.left = (el.x + el.w / 2) + 'px';
+                        mark.style.top = (el.y + el.h / 2) + 'px';
+                        mark.textContent = el.ref;
+                        container.appendChild(mark);
+                    });
+                }, elements);
+            }
+
             const ss = await page.screenshot({ type: 'png' });
+
+            if (args.mark_elements) {
+                await page.evaluate(() => {
+                    document.getElementById('browser-agent-som-style')?.remove();
+                    document.getElementById('browser-agent-som-container')?.remove();
+                });
+            }
+
             return { content: [{ type: 'image', data: ss.toString('base64'), mimeType: 'image/png' }] };
         }
         case 'browser_print_to_pdf': {
