@@ -26,8 +26,10 @@ This browser agent works best paired with other MCPs for full power:
 | Search the web | `browser_search(query)` | `browser_navigate('https://duckduckgo.com/?q=...')` |
 | Sense page state (structure only) | `browser_get_state()` | `browser_observe()` |
 | Sense page state (with visual) | `browser_get_state(screenshot=true)` | `browser_screenshot()` |
+| Sense page with Vision (Set-of-Mark) | `browser_get_state(screenshot=true, mark_elements=true)` | `browser_screenshot(mark_elements=true)` |
 | Enumerate interactable elements only | `browser_observe()` | `browser_get_state()` |
 | Click by element ref | `browser_click_ref(ref)` | `browser_click(selector)` |
+| Click & Download File | `browser_download_click(ref, savePath?)` | — |
 | Diff AX tree snapshots | `browser_state_diff()` | — |
 | Extract Tables | `browser_extract_table(selector)` | `browser_get_text()` |
 | Semantic Click | `browser_click_text(text, type='button')` | `browser_click(selector)` |
@@ -216,8 +218,9 @@ Screenshots consume significant tokens. Use them only when the AX tree is not en
 |-----------|------|-------------|
 | Plan next action — what can I click? | `browser_observe()` | ❌ |
 | First look at unfamiliar page | `browser_get_state()` | ❌ |
-| Page has canvas, iframes, shadow DOM, or custom widgets | `browser_get_state(screenshot=true)` | ✔️ |
-| Explicit visual verification (layout, images, CAPTCHA) | `browser_screenshot()` or `browser_get_state(screenshot=true)` | ✔️ |
+| Page has canvas, shadow DOM, or custom widgets | `browser_get_state(screenshot=true)` | ✔️ |
+| Visually complex UI requiring Vision/LLM spatial reasoning | `browser_screenshot(mark_elements=true)` (Set-of-Mark) | ✔️ |
+| Explicit visual verification (layout, images, CAPTCHA) | `browser_screenshot()` | ✔️ |
 | After action, check what changed | `browser_state_diff()` | ❌ |
 | Debug JS errors after interaction | `browser_console_messages(type='error')` | ❌ |
 | Verify API call was made | `browser_network_requests(filter='/api/')` | ❌ |
@@ -225,12 +228,13 @@ Screenshots consume significant tokens. Use them only when the AX tree is not en
 **When AX tree is incomplete** (elements not appearing in `browser_observe` / `browser_get_state`):
 - Canvas-rendered UIs (charts, games, custom drawings)
 - `aria-hidden="true"` elements that are visually important
-- Cross-origin iframes
 - Web components with closed shadow DOM
 
-In those cases, call `browser_get_state(screenshot=true)` or `browser_screenshot()` to see what the page actually looks like.
+*Note: Cross-origin iframes (like Stripe/CAPTCHA) are automatically pierced and mapped by the extraction tools, so they do NOT require screenshots to interact with!*
 
-`browser_observe` returns only interactable elements with `ref` numbers — no headings, no text blocks, no AX tree, no image. Use `browser_click_ref(ref)` to act on them.
+In highly stylized cases where DOM semantic extraction fails entirely, call `browser_get_state(screenshot=true, mark_elements=true)`. This uses **Set-of-Mark (SoM)** prompting, drawing highly visible numbered badges over all interactable elements on the screenshot, allowing a Vision LLM to locate elements visually.
+
+`browser_observe` returns only interactable elements with `ref` numbers — no headings, no text blocks, no AX tree, no image. Use `browser_click_ref(ref)` to act on them. The `browser_click_ref` tool is **closed-loop**: it will automatically wait for `networkidle` after clicking and report back if the action caused a navigation or mutated the page (SOTA Action Verification).
 
 ## Planner-Validator Loop
 
@@ -424,19 +428,25 @@ browser_click("#confirm-delete")
 - Handler persists for one dialog, then resets
 - For `prompt()`, provide `promptText` parameter
 
-## File Upload
+## File Upload & Download
 
+### Uploads
 Upload files to `<input type="file">` elements.
 
 ```
 browser_upload("#avatar", "/path/to/photo.jpg")
 browser_upload("#documents", "/file1.pdf, /file2.pdf")  // multiple files
 ```
+*Note: Path must be absolute. Comma-separated for multiple files.*
 
-### Notes:
-- Path must be absolute
-- Comma-separated for multiple files
-- Input must have `type="file"` attribute
+### Headless Downloads (OS Dialog Bypass)
+If a button triggers an OS-level file download dialog, standard headless clicks will hang. Use `browser_download_click` to wrap the click in a download interceptor:
+
+```
+// 1. Get the ref of the "Export CSV" button via browser_observe
+// 2. Pass the ref and the absolute path to save the file
+browser_download_click(ref=42, savePath="/home/agent/workspace/export.csv")
+```
 
 ## Click Nth Match
 
