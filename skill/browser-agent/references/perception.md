@@ -78,3 +78,24 @@ body
 - `current` — aria-current value
 - `type` — input type attribute
 - `href` — link destination (truncated)
+
+## browser_observe & browser_get_state
+
+Extract coordinate-based semantic references (`ref`) and Visual DOM state (Set-of-Mark).
+
+### Usage
+```javascript
+// 1. Get raw Semantic Elements array (ideal for discovering click targets)
+browser_observe()
+
+// 2. Get full page state (headings, text, forms) + SoM Screenshot
+browser_get_state(mark_elements=true, screenshot=true)
+```
+
+### When to Use
+- You need a visual representation of the page with numbered bounding boxes (SoM).
+- You are trying to click an element inside a cross-origin iframe (e.g. Stripe checkout, CAPTCHA).
+- Standard CSS selectors are failing due to complex SPAs or shadow DOMs.
+
+### Why use `ref` instead of selectors?
+When you use `browser_click_ref(ref)`, the agent calculates absolute page coordinates and issues a raw mouse click. This natively bypasses iframe restrictions, pointer-events blocks, and obfuscated CSS classes.
