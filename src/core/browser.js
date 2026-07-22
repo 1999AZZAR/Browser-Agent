@@ -384,12 +384,17 @@ function clearNetworkRequests(page) { const log = pageNetworkLog.get(page); if (
 async function listPages() {
     const ctx = await getBrowserContext();
     const pages = ctx.pages();
-    return pages.map((p, i) => ({
-        index: i,
-        title: p.title().catch(() => 'Error'),
-        url: p.url(),
-        active: p === activePage,
-    }));
+    const results = [];
+    for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        results.push({
+            index: i,
+            title: await p.title().catch(() => 'Error'),
+            url: p.url(),
+            active: p === activePage,
+        });
+    }
+    return results;
 }
 
 async function switchPage(index) {
