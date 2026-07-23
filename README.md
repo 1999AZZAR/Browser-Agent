@@ -52,6 +52,8 @@ See the General Browser Agent in action with Gemini CLI: [Watch on YouTube](http
 
 ### Named Agents / Parallelism
 
+![Blotcat acting as a puppeteer, controlling multiple isolated parallel browser contexts on strings](assets/blotcat-parallel.jpg)
+
 | Tool | Description |
 |------|-------------|
 | `browser_agent_create` | Create a new named agent page, or switch to an existing one |
@@ -119,6 +121,8 @@ browser_assert_url("pattern=/dashboard")
 
 ### Observation & Extraction
 
+![Blotcat using AX Tree goggles to turn a messy web scribble into a neat grid of Set-of-Mark boxes](assets/blotcat-perception.jpg)
+
 | Tool | Description |
 |------|-------------|
 | `browser_get_state` | Unified page snapshot: URL, title, AX tree, interactive elements, screenshot. Use `mark_elements=true` for Set-of-Mark visual bounding boxes. |
@@ -153,6 +157,8 @@ args: { "x": 6, "y": 7 }
 ```
 
 ### Request Interception & API Capture
+
+![Blotcat acting as a network tollbooth, holding a block sign to an envelope while stamping another with mock](assets/blotcat-interception.jpg)
 
 | Tool | Description |
 |------|-------------|
