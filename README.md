@@ -328,6 +328,8 @@ browser_network_requests(statusMin=400)  # Any failed API calls?
 
 ## Architecture: Sense-Think-Act
 
+![Blotcat walking through a closed-loop automation cycle: Sense (eye) -> Think (lightbulb) -> Act (mouse)](assets/blotcat-architecture.jpg)
+
 The agent is designed for closed-loop automation with a **hybrid screenshot strategy** — screenshots are used only when the AX tree is insufficient.
 
 ```
